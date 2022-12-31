@@ -1,4 +1,9 @@
+import 'dart:io';
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
+import 'package:nfc_manager/nfc_manager.dart';
+import 'package:nfc_manager/platform_tags.dart';
 
 void main() {
   runApp(const MyApp());
@@ -7,109 +12,170 @@ void main() {
 class MyApp extends StatelessWidget {
   const MyApp({Key? key}) : super(key: key);
 
-  // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Flutter Demo',
-      theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // Try running your application with "flutter run". You'll see the
-        // application has a blue toolbar. Then, without quitting the app, try
-        // changing the primarySwatch below to Colors.green and then invoke
-        // "hot reload" (press "r" in the console where you ran "flutter run",
-        // or simply save your changes to "hot reload" in a Flutter IDE).
-        // Notice that the counter didn't reset back to zero; the application
-        // is not restarted.
-        primarySwatch: Colors.blue,
-      ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
+    return const MaterialApp(
+      home: NfcReadPage(),
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({Key? key, required this.title}) : super(key: key);
-
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
+class NfcReadPage extends StatefulWidget {
+  const NfcReadPage({Key? key}) : super(key: key);
 
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  State<NfcReadPage> createState() => _NfcReadPageState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+class _NfcReadPageState extends State<NfcReadPage> {
+  int balance = 0;
 
-  void _incrementCounter() {
-    setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
-    });
+  @override
+  void initState() {
+    super.initState();
   }
 
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
     return Scaffold(
-      appBar: AppBar(
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
-      ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
-        child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Invoke "debug painting" (press "p" in the console, choose the
-          // "Toggle Debug Paint" action from the Flutter Inspector in Android
-          // Studio, or the "Toggle Debug Paint" command in Visual Studio Code)
-          // to see the wireframe for each widget.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            const Text(
-              'You have pushed the button this many times:',
-            ),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headline4,
-            ),
-          ],
+      body: SafeArea(
+        child: FutureBuilder(
+          future: NfcManager.instance.isAvailable(),
+          builder: (context, ss) {
+            if (ss.data == true) {
+              return Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text('$balance 円'),
+                    ElevatedButton(
+                      onPressed: () async {
+                        NfcManager.instance.startSession(
+                          onDiscovered: (tag) async {
+                            final pollingRes = await polling(tag);
+                            final idm = pollingRes.sublist(2, 10);
+                            final readWithoutEncryptionRes =
+                                await readWithoutEncryption(tag, idm: idm);
+                            print(readWithoutEncryptionRes);
+                          },
+                        );
+                      },
+                      child: const Text('読み込む'),
+                    ),
+                  ],
+                ),
+              );
+            }
+            return const Center(
+              child: Text('対応していません'),
+            );
+          },
         ),
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
-      ), // This trailing comma makes auto-formatting nicer for build methods.
     );
+  }
+
+  /// Polling
+  Future<Uint8List> polling(NfcTag tag) async {
+    final systemCode = [0xFE, 0x00];
+    final List<int> packet = [];
+    if (Platform.isAndroid) {
+      packet.add(0x06);
+    }
+    packet.add(0x00);
+    packet.addAll(systemCode.reversed);
+    packet.add(0x01);
+    packet.add(0x0F);
+
+    final command = Uint8List.fromList(packet);
+
+    late final Uint8List? res;
+
+    if (NfcF.from(tag) != null) {
+      final nfcf = NfcF.from(tag);
+      res = await nfcf?.transceive(data: command);
+    } else if (FeliCa.from(tag) != null) {
+      final felica = FeliCa.from(tag);
+      res = await felica?.sendFeliCaCommand(command);
+    }
+    if (res == null) {
+      throw Exception();
+    }
+    return res;
+  }
+
+  /// RequestService
+  Future<Uint8List> requestService(
+    NfcTag tag, {
+    required Uint8List idm,
+  }) async {
+    final serviceCode = [0x50, 0xD7];
+    final nodeCodeList = Uint8List.fromList(serviceCode);
+    final List<int> packet = [];
+    if (Platform.isAndroid) {
+      packet.add(0x06);
+    }
+    packet.add(0x02);
+    packet.addAll(idm);
+    packet.add(nodeCodeList.elementSizeInBytes);
+    packet.addAll(serviceCode.reversed);
+
+    final command = Uint8List.fromList(packet);
+
+    late final Uint8List? res;
+
+    if (NfcF.from(tag) != null) {
+      final nfcf = NfcF.from(tag);
+      res = await nfcf?.transceive(data: command);
+    } else if (FeliCa.from(tag) != null) {
+      final felica = FeliCa.from(tag);
+      res = await felica?.sendFeliCaCommand(command);
+    }
+    if (res == null) {
+      throw Exception();
+    }
+    return res;
+  }
+
+  /// ReadWithoutEncryption
+  Future<Uint8List> readWithoutEncryption(
+    NfcTag tag, {
+    required Uint8List idm,
+  }) async {
+    const blockCount = 1;
+    final serviceCode = [0x50, 0xD7];
+    final List<int> packet = [];
+    if (Platform.isAndroid) {
+      packet.add(0);
+    }
+    packet.add(0x06);
+    packet.addAll(idm);
+    packet.add(serviceCode.length ~/ 2);
+    packet.addAll(serviceCode.reversed);
+    packet.add(blockCount);
+
+    for (int i = 0; i < blockCount; i++) {
+      packet.add(0x80);
+      packet.add(i);
+    }
+    if (Platform.isAndroid) {
+      packet[0] = packet.length;
+    }
+
+    final command = Uint8List.fromList(packet);
+
+    late final Uint8List? res;
+
+    if (NfcF.from(tag) != null) {
+      final nfcf = NfcF.from(tag);
+      res = await nfcf?.transceive(data: command);
+    } else if (FeliCa.from(tag) != null) {
+      final felica = FeliCa.from(tag);
+      res = await felica?.sendFeliCaCommand(command);
+    }
+    if (res == null) {
+      throw Exception();
+    }
+    return res;
   }
 }
