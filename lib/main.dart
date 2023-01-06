@@ -202,7 +202,7 @@ class _NfcReadPageState extends State<NfcReadPage> {
 
   /// バイトデータの変換
   int parse(Uint8List rweRes) {
-    if (rweRes[10] != 0x00) {
+    if (rweRes[10] != 0x00 || rweRes[11] != 0x00) {
       throw Exception();
     }
     final blockSize = rweRes[12];
