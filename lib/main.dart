@@ -52,11 +52,30 @@ class _NfcReadPageState extends State<NfcReadPage> {
                       onPressed: () async {
                         NfcManager.instance.startSession(
                           onDiscovered: (tag) async {
-                            final pollingRes = await polling(tag);
+                            final systemCode = [0xFE, 0x00];
+                            final serviceCode = [0x50, 0xD7];
+                            final pollingRes =
+                                await polling(tag, systemCode: systemCode);
                             final idm = pollingRes.sublist(2, 10);
-                            final readWithoutEncryptionRes =
-                                await readWithoutEncryption(tag, idm: idm);
-                            print(readWithoutEncryptionRes);
+                            final requestServiceRes = await requestService(
+                              tag,
+                              idm: idm,
+                              serviceCode: serviceCode,
+                            );
+                            if (requestServiceRes[11] == 0 &&
+                                requestServiceRes[12] == 0) {
+                              final readWithoutEncryptionRes =
+                                  await readWithoutEncryption(
+                                tag,
+                                idm: idm,
+                                serviceCode: serviceCode,
+                                blockCount: 1,
+                              );
+                              final balance = parse(readWithoutEncryptionRes);
+                              setState(() {
+                                this.balance = balance;
+                              });
+                            }
                           },
                         );
                       },
@@ -76,8 +95,10 @@ class _NfcReadPageState extends State<NfcReadPage> {
   }
 
   /// Polling
-  Future<Uint8List> polling(NfcTag tag) async {
-    final systemCode = [0xFE, 0x00];
+  Future<Uint8List> polling(
+    NfcTag tag, {
+    required List<int> systemCode,
+  }) async {
     final List<int> packet = [];
     if (Platform.isAndroid) {
       packet.add(0x06);
@@ -108,8 +129,8 @@ class _NfcReadPageState extends State<NfcReadPage> {
   Future<Uint8List> requestService(
     NfcTag tag, {
     required Uint8List idm,
+    required List<int> serviceCode,
   }) async {
-    final serviceCode = [0x50, 0xD7];
     final nodeCodeList = Uint8List.fromList(serviceCode);
     final List<int> packet = [];
     if (Platform.isAndroid) {
@@ -141,9 +162,9 @@ class _NfcReadPageState extends State<NfcReadPage> {
   Future<Uint8List> readWithoutEncryption(
     NfcTag tag, {
     required Uint8List idm,
+    required List<int> serviceCode,
+    required int blockCount,
   }) async {
-    const blockCount = 1;
-    final serviceCode = [0x50, 0xD7];
     final List<int> packet = [];
     if (Platform.isAndroid) {
       packet.add(0);
@@ -177,5 +198,26 @@ class _NfcReadPageState extends State<NfcReadPage> {
       throw Exception();
     }
     return res;
+  }
+
+  /// バイトデータの変換
+  int parse(Uint8List rweRes) {
+    if (rweRes[10] != 0x00) {
+      throw Exception();
+    }
+    final blockSize = rweRes[12];
+    const blockLength = 16;
+    final data = List.generate(
+        blockSize,
+        (index) =>
+            Uint8List.fromList(List.generate(blockLength, (index) => 0)));
+    for (int i = 0; i < blockSize; i++) {
+      final offset = 13 + i * blockLength;
+      final tmp = rweRes.sublist(offset, offset + blockLength);
+      data[i] = tmp;
+    }
+    final balanceData =
+        Uint8List.fromList(data[0].sublist(0, 4).reversed.toList());
+    return balanceData.buffer.asByteData().getInt32(0);
   }
 }
