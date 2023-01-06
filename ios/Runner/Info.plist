@@ -45,5 +45,7 @@
 	<false/>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
+	<key>NFCReaderUsageDescription</key>
+    <string>任意のテキスト</string>
 </dict>
 </plist>
